@@ -37,6 +37,12 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-masterprompt', factory: function 
     '.dshmp-actions { display: flex; gap: 6px; justify-content: flex-end; }',
     '.dshmp-msg { white-space: pre-wrap; font-size: 11.5px; padding: 6px 8px; border-radius: 6px; background: var(--dsw-alias-bg-layer-1, rgba(128,128,128,.10)); color: var(--dsw-alias-label-secondary, inherit); }',
     '.dshmp-msg.err { color: var(--dsw-alias-state-error-primary, #e08b8b); }',
+    '.dshmp-images { display: flex; flex-direction: column; gap: 6px; }',
+    '.dshmp-img { display: flex; gap: 8px; align-items: flex-start; padding: 6px; border: 1px solid var(--dsw-alias-border-l1, rgba(128,128,128,.25)); border-radius: 8px; }',
+    '.dshmp-thumb { width: 52px; height: 52px; object-fit: cover; border-radius: 6px; border: 1px solid var(--dsw-alias-border-l2, rgba(128,128,128,.35)); flex: none; background: var(--dsw-alias-bg-layer-1, rgba(128,128,128,.10)); }',
+    '.dshmp-imgbody { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }',
+    '.dshmp-textarea-small { min-height: 54px; font-size: 11.5px; }',
+    '.dshmp-file { font-size: 11.5px; color: var(--dsw-alias-label-secondary, inherit); }',
   ].join('\n')
 
   async function api(name, body) {
@@ -51,6 +57,28 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-masterprompt', factory: function 
       })
     }
     return await res.json()
+  }
+
+  var MAX_IMAGES = 4
+  var MAX_IMAGE_BYTES = 8 * 1024 * 1024
+
+  function readFileAsBase64(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader()
+      reader.onload = function () {
+        var result = String(reader.result || '')
+        var comma = result.indexOf(',')
+        resolve(comma >= 0 ? result.slice(comma + 1) : result)
+      }
+      reader.onerror = function () { reject(new Error('read failed')) }
+      reader.readAsDataURL(file)
+    })
+  }
+
+  function imageUrlOf(image) {
+    if (image.previewUrl) return image.previewUrl
+    if (image.id) return '/dsh-mp/image?id=' + encodeURIComponent(image.id)
+    return ''
   }
 
   function PersonaBox(props) {
@@ -170,10 +198,20 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-masterprompt', factory: function 
       busy[1](true)
       msg[1]('')
       try {
+        var images = (editing[0].images || []).map(function (image) {
+          return {
+            id: image.saved ? image.id : undefined,
+            name: image.name,
+            mediaType: image.mediaType,
+            description: image.description,
+            data: image.data,
+          }
+        })
         var r = await api('save-template', {
           id: editing[0].id || '',
           name: editing[0].name,
           text: editing[0].text,
+          images: images,
         })
         if (r && r.ok) {
           msg[1]('已保存模板「' + r.template.name + '」。')
@@ -184,6 +222,96 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-masterprompt', factory: function 
         msg[1]('保存失败: ' + String((e && e.message) || e))
       }
       busy[1](false)
+    }
+
+    function openEditor(template) {
+      var images = template
+        ? (template.images || []).map(function (image) {
+            return {
+              id: image.id,
+              saved: true,
+              name: image.name,
+              mediaType: image.mediaType,
+              description: image.description || '',
+              previewUrl: '/dsh-mp/image?id=' + encodeURIComponent(image.id),
+            }
+          })
+        : []
+      editing[1]({
+        id: template ? template.id : null,
+        name: template ? template.name : '',
+        text: template ? template.text : '',
+        images: images,
+      })
+    }
+
+    async function addImages(files) {
+      if (!editing[0]) return
+      var list = Array.prototype.slice.call(files || [])
+      var current = editing[0].images || []
+      var room = MAX_IMAGES - current.length
+      if (room <= 0) {
+        msg[1]('每个模板最多 ' + MAX_IMAGES + ' 张参考图。')
+        return
+      }
+      if (list.length > room) {
+        msg[1]('每个模板最多 ' + MAX_IMAGES + ' 张参考图,只添加前 ' + room + ' 张。')
+        list = list.slice(0, room)
+      }
+      var added = []
+      for (var i = 0; i < list.length; i++) {
+        var file = list[i]
+        if (!/^image\/(png|jpeg|webp|gif)$/.test(file.type)) {
+          msg[1]('只支持 PNG / JPEG / WebP / GIF:' + file.name)
+          continue
+        }
+        if (file.size > MAX_IMAGE_BYTES) {
+          msg[1]('图片超过 8MB:' + file.name)
+          continue
+        }
+        try {
+          var data = await readFileAsBase64(file)
+          added.push({
+            id: 'new-' + Date.now().toString(36) + '-' + i,
+            saved: false,
+            name: file.name,
+            mediaType: file.type,
+            description: '',
+            data: data,
+            previewUrl: 'data:' + file.type + ';base64,' + data,
+          })
+        } catch (e) {
+          msg[1]('读取失败:' + file.name)
+        }
+      }
+      if (!added.length) return
+      editing[1](function (prev) {
+        return { id: prev.id, name: prev.name, text: prev.text, images: (prev.images || []).concat(added) }
+      })
+    }
+
+    function patchImage(id, patch) {
+      editing[1](function (prev) {
+        return {
+          id: prev.id,
+          name: prev.name,
+          text: prev.text,
+          images: (prev.images || []).map(function (image) {
+            return image.id === id ? Object.assign({}, image, patch) : image
+          }),
+        }
+      })
+    }
+
+    function removeImage(id) {
+      editing[1](function (prev) {
+        return {
+          id: prev.id,
+          name: prev.name,
+          text: prev.text,
+          images: (prev.images || []).filter(function (image) { return image.id !== id }),
+        }
+      })
     }
 
     async function doDelete(id) {
@@ -211,18 +339,22 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-masterprompt', factory: function 
       rows = st.templates.map(function (t) {
         var active = effective.some(function (e) { return e.id === t.id })
         var inUse = (st.inUse && st.inUse[t.id]) || 0
+        var imageCount = (t.images && t.images.length) || 0
         return React.createElement('div', { key: t.id, className: 'dshmp-row' + (active ? ' active' : '') },
           React.createElement('span', { className: 'name' },
             t.name,
+            imageCount ? React.createElement('span', { className: 'dshmp-muted' }, '  ' + imageCount + ' 图') : null,
             inUse > 0 ? React.createElement('span', { className: 'dshmp-muted' }, '  ' + inUse + ' 个对话使用中') : null),
           React.createElement('button', { className: 'dshmp-mini primary', disabled: busy[0] || active, onClick: function () { return doApply(t.id) } }, active ? '已生效' : '应用'),
           active
             ? React.createElement('button', { className: 'dshmp-mini', disabled: busy[0], title: '从当前组合中移除', onClick: function () { return doRemove(t.id) } }, '移除')
             : React.createElement('button', { className: 'dshmp-mini', disabled: busy[0], title: '追加到当前组合(多人设叠加)', onClick: function () { return doAppend(t.id) } }, '＋'),
-          React.createElement('button', { className: 'dshmp-mini', disabled: busy[0], onClick: function () { editing[1]({ id: t.id, name: t.name, text: t.text }) } }, '编辑'),
+          React.createElement('button', { className: 'dshmp-mini', disabled: busy[0], onClick: function () { openEditor(t) } }, '编辑'),
           React.createElement('button', { className: 'dshmp-mini danger', disabled: busy[0] || inUse > 0, title: inUse > 0 ? '有对话正在使用,需先切换后才能删除' : '删除', onClick: function () { return doDelete(t.id) } }, '删除'))
       })
     }
+
+    var editorImages = (editing[0] && editing[0].images) || []
 
     var panel = open[0] ? React.createElement('div', { className: 'dshmp-panel' },
       React.createElement('div', { className: 'dshmp-head' },
@@ -232,21 +364,53 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-masterprompt', factory: function 
         React.createElement('div', { className: 'dshmp-status' }, '当前对话: ' + (effective.length ? label : '标准模式(无人设)')),
         rows.length ? rows : React.createElement('div', { className: 'dshmp-muted' }, '还没有人设模板,点下方「新建人设」创建。'),
         editing[0] === null ? React.createElement('div', { className: 'dshmp-actions' },
-          React.createElement('button', { className: 'dshmp-mini', disabled: busy[0], onClick: function () { editing[1]({ id: null, name: '', text: '' }) } }, '新建人设'),
+          React.createElement('button', { className: 'dshmp-mini', disabled: busy[0], onClick: function () { openEditor(null) } }, '新建人设'),
           React.createElement('button', { className: 'dshmp-mini', disabled: busy[0] || !effective.length, onClick: doClear }, '恢复标准模式')) : null,
         editing[0] ? React.createElement('div', { className: 'dshmp-edit' },
           React.createElement('input', {
             className: 'dshmp-input',
             placeholder: '人设名称(必填)',
             value: editing[0].name,
-            onChange: function (ev) { editing[1]({ id: editing[0].id, name: ev.target.value, text: editing[0].text }) },
+            onChange: function (ev) { editing[1]({ id: editing[0].id, name: ev.target.value, text: editing[0].text, images: editing[0].images }) },
           }),
           React.createElement('textarea', {
             className: 'dshmp-textarea',
             placeholder: '在这里写下人设 / master prompt:思考模式、缓存策略、提问模式、语气、边界……(纯文本,最高 100000 字符)',
             value: editing[0].text,
-            onChange: function (ev) { editing[1]({ id: editing[0].id, name: editing[0].name, text: ev.target.value }) },
+            onChange: function (ev) { editing[1]({ id: editing[0].id, name: editing[0].name, text: ev.target.value, images: editing[0].images }) },
           }),
+          React.createElement('div', { className: 'dshmp-images' },
+            React.createElement('div', { className: 'dshmp-muted' }, '参考图(最多 ' + MAX_IMAGES + ' 张;图片本体与下面手写的描述会随每轮请求一起发给模型)'),
+            editorImages.map(function (image) {
+              return React.createElement('div', { key: image.id, className: 'dshmp-img' },
+                React.createElement('img', { className: 'dshmp-thumb', src: imageUrlOf(image), alt: image.name }),
+                React.createElement('div', { className: 'dshmp-imgbody' },
+                  React.createElement('input', {
+                    className: 'dshmp-input',
+                    placeholder: '图片名称',
+                    value: image.name,
+                    onChange: function (ev) { patchImage(image.id, { name: ev.target.value }) },
+                  }),
+                  React.createElement('textarea', {
+                    className: 'dshmp-textarea dshmp-textarea-small',
+                    placeholder: '图片描述(手写,例如"布洛妮娅的立绘,灰发,机械义肢")',
+                    value: image.description,
+                    onChange: function (ev) { patchImage(image.id, { description: ev.target.value }) },
+                  }),
+                  React.createElement('div', { className: 'dshmp-actions' },
+                    React.createElement('button', { className: 'dshmp-mini danger', disabled: busy[0], onClick: function () { removeImage(image.id) } }, '移除'))))
+            }),
+            React.createElement('input', {
+              className: 'dshmp-file',
+              type: 'file',
+              accept: 'image/png,image/jpeg,image/webp,image/gif',
+              multiple: true,
+              onChange: function (ev) {
+                var picked = Array.prototype.slice.call(ev.target.files || [])
+                ev.target.value = ''
+                addImages(picked)
+              },
+            })),
           React.createElement('div', { className: 'dshmp-muted' }, '保存后立即对本对话生效;编辑模板会同步影响所有正在使用它的对话。'),
           React.createElement('div', { className: 'dshmp-actions' },
             React.createElement('button', { className: 'dshmp-mini primary', disabled: busy[0], onClick: doSave }, '保存'),

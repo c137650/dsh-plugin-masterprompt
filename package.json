@@ -1,7 +1,7 @@
 {
   "name": "dsh-plugin-masterprompt",
-  "version": "1.0.0",
-  "description": "Per-conversation persona / master prompt for DeepSeek Harness: a small box beside the mode controls in the composer lets you create, switch and manage the highest-priority persona of the current conversation (subagents inherit, new conversations inherit the last-used persona).",
+  "version": "1.1.0",
+  "description": "Per-conversation persona / master prompt for DeepSeek Harness: a small box beside the mode controls in the composer lets you create, switch and manage the highest-priority persona of the current conversation, including hand-described reference images that ride along with every request (subagents inherit, new conversations inherit the last-used persona).",
   "type": "module",
   "main": "lib/index.js",
   "license": "MIT",
