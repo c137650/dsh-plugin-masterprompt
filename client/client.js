@@ -43,6 +43,12 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-masterprompt', factory: function 
     '.dshmp-imgbody { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }',
     '.dshmp-textarea-small { min-height: 54px; font-size: 11.5px; }',
     '.dshmp-file { font-size: 11.5px; color: var(--dsw-alias-label-secondary, inherit); }',
+    '.dshmp-style { display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--dsw-alias-border-l1, rgba(128,128,128,.25)); border-radius: 8px; padding: 8px; }',
+    '.dshmp-stylehead { display: flex; align-items: center; justify-content: space-between; gap: 6px; }',
+    '.dshmp-check { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--dsw-alias-label-secondary, inherit); }',
+    '.dshmp-check input[type="checkbox"] { width: auto; margin: 0; }',
+    '.dshmp-num { width: 84px; }',
+    '.dshmp-badge { display: inline-block; padding: 1px 6px; border-radius: 8px; border: 1px solid var(--dsw-alias-brand-primary, rgba(64,128,255,.5)); color: var(--dsw-alias-brand-primary, rgba(64,128,255,.95)); font-size: 10.5px; }',
   ].join('\n')
 
   async function api(name, body) {
@@ -81,6 +87,24 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-masterprompt', factory: function 
     return ''
   }
 
+  // ---------- 语言习惯表(style) ----------
+  //
+  // style = { lines: string[] },一行一条,第一人称写的。
+  // 以前那套 check(字数上限、禁 Markdown、禁第一人称、签名)整层删了:
+  // 那套东西只判形态、不判语气,而且只能在事后记账。
+
+  function styleOf(template) {
+    var s = template && template.style
+    if (!s || typeof s !== "object") return null
+    var lines = Array.isArray(s.lines) ? s.lines.filter(function (l) { return typeof l === "string" }) : []
+    var should = Array.isArray(s.should) ? s.should.filter(function (l) { return typeof l === "string" }) : []
+    return { lines: lines, should: should }
+  }
+  function styleLineCount(template) {
+    var s = template && template.style
+    if (!s) return 0
+    return (Array.isArray(s.should) ? s.should.length : 0) + (Array.isArray(s.lines) ? s.lines.length : 0)
+  }
   function PersonaBox(props) {
     var sessionId = props.sessionId
     var open = React.useState(false)
@@ -212,6 +236,8 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-masterprompt', factory: function 
           name: editing[0].name,
           text: editing[0].text,
           images: images,
+          // 习惯表跟着一起存。null = 明确清掉这一份。
+          style: editing[0].style ? { lines: editing[0].style.lines, should: editing[0].style.should } : null,
         })
         if (r && r.ok) {
           msg[1]('已保存模板「' + r.template.name + '」。')
@@ -242,9 +268,22 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-masterprompt', factory: function 
         name: template ? template.name : '',
         text: template ? template.text : '',
         images: images,
+        style: styleOf(template),
       })
     }
 
+    // 习惯表只有一个文本框,改的是 lines。
+    function patchStyle(next) {
+      editing[1](function (prev) {
+        return { id: prev.id, name: prev.name, text: prev.text, images: prev.images, style: next }
+      })
+    }
+
+    function setStyleLines(raw, key) {
+      var lines = String(raw || "").split(/\r?\n/).map(function (l) { return l.trim() }).filter(function (l) { return !!l })
+      var cur = editing[0].style || { lines: [], should: [] }
+      patchStyle({ lines: key === "should" ? cur.lines : lines, should: key === "should" ? lines : cur.should })
+    }
     async function addImages(files) {
       if (!editing[0]) return
       var list = Array.prototype.slice.call(files || [])
@@ -286,7 +325,7 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-masterprompt', factory: function 
       }
       if (!added.length) return
       editing[1](function (prev) {
-        return { id: prev.id, name: prev.name, text: prev.text, images: (prev.images || []).concat(added) }
+        return { id: prev.id, name: prev.name, text: prev.text, images: (prev.images || []).concat(added), style: prev.style }
       })
     }
 
@@ -299,6 +338,7 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-masterprompt', factory: function 
           images: (prev.images || []).map(function (image) {
             return image.id === id ? Object.assign({}, image, patch) : image
           }),
+          style: prev.style,
         }
       })
     }
@@ -310,6 +350,7 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-masterprompt', factory: function 
           name: prev.name,
           text: prev.text,
           images: (prev.images || []).filter(function (image) { return image.id !== id }),
+          style: prev.style,
         }
       })
     }
@@ -340,10 +381,12 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-masterprompt', factory: function 
         var active = effective.some(function (e) { return e.id === t.id })
         var inUse = (st.inUse && st.inUse[t.id]) || 0
         var imageCount = (t.images && t.images.length) || 0
+        var styleCount = styleLineCount(t)
         return React.createElement('div', { key: t.id, className: 'dshmp-row' + (active ? ' active' : '') },
           React.createElement('span', { className: 'name' },
             t.name,
             imageCount ? React.createElement('span', { className: 'dshmp-muted' }, '  ' + imageCount + ' 图') : null,
+            styleCount ? React.createElement('span', { className: 'dshmp-badge' }, '习惯 ' + styleCount) : null,
             inUse > 0 ? React.createElement('span', { className: 'dshmp-muted' }, '  ' + inUse + ' 个对话使用中') : null),
           React.createElement('button', { className: 'dshmp-mini primary', disabled: busy[0] || active, onClick: function () { return doApply(t.id) } }, active ? '已生效' : '应用'),
           active
@@ -371,14 +414,37 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-masterprompt', factory: function 
             className: 'dshmp-input',
             placeholder: '人设名称(必填)',
             value: editing[0].name,
-            onChange: function (ev) { editing[1]({ id: editing[0].id, name: ev.target.value, text: editing[0].text, images: editing[0].images }) },
+            onChange: function (ev) { editing[1]({ id: editing[0].id, name: ev.target.value, text: editing[0].text, images: editing[0].images, style: editing[0].style }) },
           }),
           React.createElement('textarea', {
             className: 'dshmp-textarea',
             placeholder: '在这里写下人设 / master prompt:思考模式、缓存策略、提问模式、语气、边界……(纯文本,最高 100000 字符)',
             value: editing[0].text,
-            onChange: function (ev) { editing[1]({ id: editing[0].id, name: editing[0].name, text: ev.target.value, images: editing[0].images }) },
+            onChange: function (ev) { editing[1]({ id: editing[0].id, name: editing[0].name, text: ev.target.value, images: editing[0].images, style: editing[0].style }) },
           }),
+          React.createElement('div', { className: 'dshmp-style' },
+            React.createElement('div', { className: 'dshmp-stylehead' },
+              React.createElement('span', { className: 'dshmp-muted' }, '语言习惯表(第一人称,一行一条)'),
+              editing[0].style
+                ? React.createElement('button', { className: 'dshmp-mini danger', disabled: busy[0], title: '移除这张表', onClick: function () { patchStyle(null) } }, '清除')
+                : React.createElement('button', { className: 'dshmp-mini', disabled: busy[0], onClick: function () { patchStyle({ lines: [], should: [] }) } }, '添加')),
+            editing[0].style
+              ? React.createElement(React.Fragment, null,
+                  React.createElement('div', { className: 'dshmp-muted' }, '我应该这样说(注入在前面)'),
+                  React.createElement('textarea', {
+                    className: 'dshmp-textarea dshmp-textarea-small',
+                    placeholder: '例:我先给判定,再给动作或依据。\n我报告状态用设备口吻:检测、确认、激活、覆盖。',
+                    value: (editing[0].style.should || []).join('\n'),
+                    onChange: function (ev) { setStyleLines(ev.target.value, 'should') },
+                  }),
+                  React.createElement('div', { className: 'dshmp-muted' }, '我不能这样说(注入在后面)'),
+                  React.createElement('textarea', {
+                    className: 'dshmp-textarea dshmp-textarea-small',
+                    placeholder: '例:我不在句首挂路标。\n我不做总分总。',
+                    value: (editing[0].style.lines || []).join('\n'),
+                    onChange: function (ev) { setStyleLines(ev.target.value, 'lines') },
+                  }))
+              : React.createElement('div', { className: 'dshmp-muted' }, '没有习惯表。点「添加」写下自己说话的样子,它会原样注入 system prompt。')),
           React.createElement('div', { className: 'dshmp-images' },
             React.createElement('div', { className: 'dshmp-muted' }, '参考图(最多 ' + MAX_IMAGES + ' 张;图片本体与下面手写的描述会随每轮请求一起发给模型)'),
             editorImages.map(function (image) {
