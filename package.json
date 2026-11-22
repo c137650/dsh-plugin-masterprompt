@@ -40,7 +40,8 @@
     },
     "./client": "./client/client.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./lib/style.js": "./lib/style.js"
   },
   "files": [
     "lib",
