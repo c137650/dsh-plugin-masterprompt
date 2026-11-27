@@ -98,7 +98,7 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-masterprompt', factory: function 
     if (!s || typeof s !== "object") return null
     var should = Array.isArray(s.should) ? s.should.filter(function (l) { return typeof l === "string" }) : []
     var openers = Array.isArray(s.openers) ? s.openers.filter(function (l) { return typeof l === "string" }) : []
-    return { should: should, openers: openers }
+    return { should: should, openers: openers, chain: typeof s.chain === "string" ? s.chain : "" }
   }
   function styleLineCount(template) {
     var s = template && template.style
@@ -269,13 +269,14 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-masterprompt', factory: function 
         text: template ? template.text : '',
         images: images,
         style: styleOf(template),
+        chainFallback: (data[0] && typeof data[0].chainDefault === "string") ? data[0].chainDefault : "",
       })
     }
 
     // 习惯表只有一个文本框,改的是 lines。
     function patchStyle(next) {
       editing[1](function (prev) {
-        return { id: prev.id, name: prev.name, text: prev.text, images: prev.images, style: next }
+        return { id: prev.id, name: prev.name, text: prev.text, images: prev.images, style: next, chainFallback: prev.chainFallback }
       })
     }
 
@@ -452,7 +453,7 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-masterprompt', factory: function 
                   React.createElement('textarea', {
                     className: 'dshmp-textarea dshmp-textarea-small',
                     placeholder: '例:想事情的时候是布洛妮娅在想,不是先摆一个助手再把人设套上去。',
-                    value: editing[0].style.chain || '',
+                    value: editing[0].style.chain || editing[0].chainFallback || '',
                     onChange: function (ev) {
                       patchStyle({
                         should: editing[0].style.should,
